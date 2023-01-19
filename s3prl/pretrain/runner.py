@@ -20,11 +20,13 @@ from collections import defaultdict
 #-------------#
 import torch
 import torch.nn as nn
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
 import numpy as np
 #-------------#
 from optimizers import get_optimizer, get_grouped_parameters
 from schedulers import get_scheduler
+
+from logger import Logger
 
 
 ##########
@@ -38,7 +40,7 @@ class Runner():
     def __init__(self, args, config):
         self.args = args
         self.config = config
-        self.logger = SummaryWriter(args.expdir)                                                 
+        self.logger = Logger(args.expdir)                         
 
         self.init_ckpt = torch.load(self.args.init_ckpt, map_location='cpu') if self.args.init_ckpt else {}
         self.upstream = self._get_upstream()
@@ -111,6 +113,10 @@ class Runner():
         print('[Runner] - Accumulated batch size:', train_batch_size * gradient_accumulate_steps)
         dataloader = self.upstream.get_train_dataloader()
 
+        ##################################################
+        valDataLoader = self.upstream.get_val_dataloader()
+        ##################################################
+
         # set epoch
         n_epochs = self.config['runner']['n_epochs']
         if n_epochs > 0: 
@@ -139,24 +145,32 @@ class Runner():
         if self.config.get('scheduler'):
             scheduler = self._get_scheduler(optimizer)
 
-        # set progress bar
-        pbar = tqdm(total=total_steps, dynamic_ncols=True, desc='overall')
+        # # set progress bar
+        # pbar = tqdm(total=total_steps, dynamic_ncols=True, desc='overall')
+        # init_step = self.init_ckpt.get('Step')
+        # if init_step:
+        #     pbar.n = init_step
+        ###################################################
         init_step = self.init_ckpt.get('Step')
+        curr_step = 0
         if init_step:
-            pbar.n = init_step
+            curr_step = init_step
+        ###################################################
 
         all_loss = 0
         backward_steps = 0
         records = defaultdict(list)
         prefix = f'{self.args.upstream}/train-'
 
-        while pbar.n < pbar.total:
-            for data in tqdm(dataloader, dynamic_ncols=True, desc='train'):
+        #############################################
+        # while pbar.n < pbar.total:
+        while curr_step < total_steps:
+            for data in dataloader:
                 # try/except block for forward/backward
                 try:
-                    if pbar.n >= pbar.total:
+                    if curr_step >= total_steps:
                         break
-                    global_step = pbar.n + 1
+                    global_step = curr_step + 1
 
                     with torch.cuda.amp.autocast(enabled=amp):
                         loss, records = self.upstream(
@@ -216,28 +230,49 @@ class Runner():
                 if scheduler:
                     scheduler.step()
 
-                # logging
-                if global_step % self.config['runner']['log_step'] == 0 or pbar.n == pbar.total -1:
-                    # log loss
-                    self.logger.add_scalar(f'{prefix}loss', all_loss, global_step=global_step)
-                    # log lr
-                    if hasattr(optimizer, 'get_lr'):
-                        self.logger.add_scalar(f'{prefix}lr', optimizer.get_lr()[0], global_step=global_step)
-                    else:
-                        self.logger.add_scalar(f'{prefix}lr', self.config['optimizer']['lr'], global_step=global_step)
-                    # log norm
-                    self.logger.add_scalar(f'{prefix}gradient-norm', grad_norm, global_step=global_step)
+                # # logging
+                # if global_step % self.config['runner']['log_step'] == 0 or pbar.n == pbar.total -1:
+                #     # log loss
+                #     self.logger.add_scalar(f'{prefix}loss', all_loss, global_step=global_step)
+                #     # log lr
+                #     if hasattr(optimizer, 'get_lr'):
+                #         self.logger.add_scalar(f'{prefix}lr', optimizer.get_lr()[0], global_step=global_step)
+                #     else:
+                #         self.logger.add_scalar(f'{prefix}lr', self.config['optimizer']['lr'], global_step=global_step)
+                #     # log norm
+                #     self.logger.add_scalar(f'{prefix}gradient-norm', grad_norm, global_step=global_step)
 
-                    # log customized contents
-                    self.upstream.log_records(
-                        records=records,
-                        logger=self.logger,
-                        prefix=prefix,
-                        global_step=global_step,
-                    )
+                #     # log customized contents
+                #     self.upstream.log_records(
+                #         records=records,
+                #         logger=self.logger,
+                #         prefix=prefix,
+                #         global_step=global_step,
+                #     )
+                #     records = defaultdict(list)
+
+                # logging
+                # if global_step % self.config['runner']['log_step'] == 0 or pbar.n == pbar.total -1:
+                if global_step % self.config['runner']['log_step'] == 0 or curr_step == total_steps - 1:
+                    ########################################
+                    val_loss = 0
+                    # for data in tqdm(valDataLoader, dynamic_ncols=True, desc='val'):
+                    for data in valDataLoader:
+                        with torch.no_grad():
+                            loss, records = self.upstream(data)
+                        val_loss += loss.item()
+                        del loss
+                    
+                    val_loss /= len(valDataLoader)
+                    ########################################
+
+                    lrForLogging = optimizer.get_lr()[0] if hasattr(optimizer, 'get_lr') else self.config['optimizer']['lr']
+                    self.logger.write(global_step, all_loss, val_loss, records, lrForLogging, grad_norm)
+
                     records = defaultdict(list)
 
-                if global_step % self.config['runner']['save_step'] == 0 or pbar.n == pbar.total -1:
+                # if global_step % self.config['runner']['save_step'] == 0 or pbar.n == pbar.total -1:
+                if global_step % self.config['runner']['save_step'] == 0 or curr_step == total_steps - 1:
                     def check_ckpt_num(directory):
                         max_keep = self.config['runner']['max_keep']
                         ckpt_pths = glob.glob(f'{directory}/states-*.ckpt')
@@ -249,7 +284,7 @@ class Runner():
 
                     all_states = {
                         'Optimizer': optimizer.state_dict(),
-                        'Step': pbar.n,
+                        'Step': curr_step,
                         'Args': self.args,
                         'Config': self.config,
                     }
@@ -258,13 +293,12 @@ class Runner():
                     if scheduler:
                         all_states['Scheduler'] = scheduler.state_dict()
                     
-                    name = f'states-epoch-{n_epochs}.ckpt' if pbar.n == pbar.total -1 and n_epochs > 0 else \
+                    # name = f'states-epoch-{n_epochs}.ckpt' if pbar.n == pbar.total -1 and n_epochs > 0 else \
+                    #        f'states-{global_step}.ckpt'
+                    name = f'states-epoch-{n_epochs}.ckpt' if curr_step == total_steps - 1 and n_epochs > 0 else \
                            f'states-{global_step}.ckpt'
                     save_path = os.path.join(self.args.expdir, name)
-                    tqdm.write(f'[Runner] - Save the checkpoint to: {save_path}')
                     torch.save(all_states, save_path)
                 
                 all_loss = 0      
-                pbar.update(1)
-
-        pbar.close()
+                curr_step += 1

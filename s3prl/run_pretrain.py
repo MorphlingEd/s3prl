@@ -149,7 +149,7 @@ def main():
 
     runner = Runner(args, config)
     eval('runner.train')()
-    runner.logger.close()
+    # runner.logger.close()
 
 
 if __name__ == '__main__':

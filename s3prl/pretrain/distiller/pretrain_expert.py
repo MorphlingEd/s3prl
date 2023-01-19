@@ -50,6 +50,7 @@ class UpstreamPretrainExpert(nn.Module):
             raise ValueError
 
         self._get_train_dataloader()
+        self._get_val_dataloader()
 
         print("[UpstreamPretrainExpert] - Initializing model...")
         model_config = DistillerConfig(self.upstream_config["distiller"])
@@ -86,6 +87,31 @@ class UpstreamPretrainExpert(nn.Module):
             collate_fn=dataset.collate_fn,
         )
 
+    ##################################
+    # Get the validation dataloader
+    def _get_val_dataloader(self):
+        dataset = OnlineWaveDataset(
+            task_config=self.upstream_config['task'],
+        	bucket_size = self.datarc["val_batch_size"],
+        	file_path = self.datarc['file_path'],
+            target_level=self.upstream_config["audio"]["target_level"],
+        	sets = self.datarc['val_sets'],
+        	max_timestep = self.datarc['max_timestep'],
+        	libri_root = self.datarc['libri_root']
+        )
+
+        self.valDataloader = DataLoader(
+            dataset,
+            batch_size=1,  # for bucketing
+            shuffle=False,
+            num_workers=self.datarc["num_workers"],
+            drop_last=False,
+            pin_memory=True,
+            collate_fn=dataset.collate_fn,
+        )
+
+    ##################################
+
     # Interface
     def load_model(self, all_states):
         if self.multi_gpu:
@@ -106,6 +132,9 @@ class UpstreamPretrainExpert(nn.Module):
     # Interface
     def get_train_dataloader(self):
         return self.dataloader
+
+    def get_val_dataloader(self):
+        return self.valDataloader
 
     # Interface
     def forward(self, data, records={}, global_step=0, log_step=1000, **kwargs):
@@ -185,7 +214,9 @@ class DistillerForPretrain(nn.Module):
         self.distiller = DistillerModel(config)
 
         self.teacher_config = teacher_config
-        teacher = torch.hub.load("s3prl/s3prl", teacher_config.model)
+        # teacher = torch.hub.load("s3prl/s3prl", teacher_config.model)
+        teacher = torch.hub.load(repo_or_dir="..",model="hubert_base", source="local")
+
         if (
             teacher_config.model.find("hubert") >= 0
             or teacher_config.model.find("wav2vec2") >= 0
