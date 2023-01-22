@@ -13,7 +13,12 @@ import torch
 import torchaudio
 import numpy as np
 from tqdm import tqdm
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
+
+######################################
+from logger import Logger
+######################################
+
 from torch.utils.data import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import is_initialized, get_rank, get_world_size
@@ -181,7 +186,8 @@ class Runner():
 
 
     def _get_downstream(self):
-        expert = importlib.import_module(f"s3prl.downstream.{self.args.downstream}.expert")
+        # expert = importlib.import_module(f"s3prl.downstream.{self.args.downstream}.expert")
+        expert = importlib.import_module(f"downstream.{self.args.downstream}.expert")
         Downstream = getattr(expert, "DownstreamExpert")
 
         model = Downstream(
@@ -251,22 +257,25 @@ class Runner():
             specaug = SpecAug(**self.config["specaug"])
 
         # progress bar
-        tqdm_file = sys.stderr if is_leader_process() else open(os.devnull, 'w')
-        pbar = tqdm(total=self.config['runner']['total_steps'], dynamic_ncols=True, desc='overall', file=tqdm_file)
+        # tqdm_file = sys.stderr if is_leader_process() else open(os.devnull, 'w')
+        # pbar = tqdm(total=self.config['runner']['total_steps'], dynamic_ncols=True, desc='overall', file=tqdm_file)
+
+        total_step = self.config['runner']['total_steps']
         init_step = self.init_ckpt.get('Step')
+        curr_step = 0
         if init_step:
-            pbar.n = init_step
+            curr_step = init_step
 
         # Tensorboard logging
         if is_leader_process():
-            logger = SummaryWriter(self.args.expdir)
+            logger = Logger(self.args.expdir)
 
         batch_ids = []
         backward_steps = 0
         records = defaultdict(list)
         epoch = self.init_ckpt.get('Epoch', 0)
         train_split = self.config['runner'].get("train_dataloader", "train")
-        while pbar.n < pbar.total:
+        while curr_step < total_step:
             try:
                 dataloader = self.downstream.model.get_dataloader(train_split, epoch=epoch)
             except TypeError as e:
@@ -277,12 +286,12 @@ class Runner():
                 else:
                     raise
 
-            for batch_id, (wavs, *others) in enumerate(tqdm(dataloader, dynamic_ncols=True, desc='train', file=tqdm_file)):
+            for batch_id, (wavs, *others) in enumerate(dataloader):
                 # try/except block for forward/backward
                 try:
-                    if pbar.n >= pbar.total:
+                    if curr_step >= total_step:
                         break
-                    global_step = pbar.n + 1
+                    global_step = curr_step + 1
 
                     wavs = [torch.FloatTensor(wav).to(self.args.device) for wav in wavs]
                     if self.upstream.trainable:
@@ -394,20 +403,18 @@ class Runner():
                         all_states['WorldSize'] = get_world_size()
 
                     save_paths = [os.path.join(self.args.expdir, name) for name in save_names]
-                    tqdm.write(f'[Runner] - Save the checkpoint to:')
+                    print(f'[Runner] - Save the checkpoint to:')
                     for i, path in enumerate(save_paths):
-                        tqdm.write(f'{i + 1}. {path}')
+                        print(f'{i + 1}. {path}')
                         torch.save(all_states, path)
 
-                pbar.update(1)
+                curr_step += 1
             epoch += 1
-
-        pbar.close()
 
         if self.args.push_to_hf_hub:
             self.push_to_huggingface_hub()
         if is_leader_process():
-            logger.close()
+            pass
 
 
     def evaluate(self, split=None, logger=None, global_step=0):
@@ -418,7 +425,7 @@ class Runner():
         if not_during_training:
             split = self.args.evaluate_split
             tempdir = tempfile.mkdtemp()
-            logger = SummaryWriter(tempdir)
+            logger = Logger(tempdir)
 
         # fix seed to guarantee the same evaluation protocol across steps 
         random.seed(self.args.seed)
@@ -442,7 +449,7 @@ class Runner():
 
         batch_ids = []
         records = defaultdict(list)
-        for batch_id, (wavs, *others) in enumerate(tqdm(dataloader, dynamic_ncols=True, desc=split, total=evaluate_steps)):
+        for batch_id, (wavs, *others) in enumerate(dataloader):
             if batch_id > evaluate_steps:
                 break
 
@@ -479,7 +486,6 @@ class Runner():
                 entry.model.train()
 
         if not_during_training:
-            logger.close()
             shutil.rmtree(tempdir)
 
         return [] if type(save_names) is not list else save_names

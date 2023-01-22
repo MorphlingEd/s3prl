@@ -85,7 +85,7 @@ class SequenceDataset(Dataset):
         self.X = []
         batch_x, batch_len = [], []
 
-        for x, x_len in tqdm(zip(X, X_lens), total=len(X), desc=f'ASR dataset {split}', dynamic_ncols=True):
+        for x, x_len in zip(X, X_lens):
             if self._parse_x_name(x) in usage_list:
                 batch_x.append(x)
                 batch_len.append(x_len)

@@ -1,11 +1,11 @@
 runner:
-  total_steps: 200000
+  total_steps: 5000 # 200000
   gradient_clipping: 1
   gradient_accumulate_steps: 1
-  log_step: 100
-  eval_step: 2000
-  save_step: 500
-  max_keep: 1
+  log_step: 50
+  eval_step: 200 # 2000
+  save_step: 1000
+  max_keep: 3
   eval_dataloaders:
     - dev-clean
 
@@ -43,12 +43,12 @@ downstream_expert:
     dev-other: ['dev-other']
     test-clean: ['test-clean']
     test-other: ['test-other']
-    num_workers: 12
+    num_workers: 4 # 12
     train_batch_size: 32
-    batch_size: 32
+    batch_size: 16 # 32
     eval_batch_size: 1
-    libri_root: '/app/data/LibriSpeech'
-    bucket_file: './data/librispeech/len_for_bucket'
+    libri_root: '/home/s1973609/librispeech/LibriSpeech'
+    bucket_file: '/home/s1973609/librispeech/LibriSpeech'
     dict_path: "./downstream/asr/char.dict"
 
     zero_infinity: True
@@ -64,8 +64,8 @@ downstream_expert:
       criterion: "ctc"
       beam: 5
       beam_threshold: 25
-      kenlm_model: '/path/to/4-gram.arpa'
-      lexicon: '/path/to/librispeech_lexicon.lst'
+      kenlm_model: './downstream/asr/4-gram.arpa' # Modified
+      lexicon: './downstream/asr/librispeech_lexicon.lst' # Modified
       lm_weight: 2
       word_score: -1
       unk_weight: -math.inf

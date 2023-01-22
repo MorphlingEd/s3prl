@@ -331,7 +331,6 @@ class DownstreamExpert(nn.Module):
                 You can return nothing or an empty list when no need to save the checkpoint
         """
         loss = torch.FloatTensor(records['loss']).mean().item()
-        print(f'{split} loss: {loss}')
 
         uer, wer = self._compute_metrics(
             records['pred_tokens'],
@@ -340,11 +339,9 @@ class DownstreamExpert(nn.Module):
             records['target_words'],
         )
 
-        logger.add_scalar(f'asr/{split}-loss', loss, global_step=global_step)
-        logger.add_scalar(f'asr/{split}-uer', uer, global_step=global_step)
-        logger.add_scalar(f'asr/{split}-wer', wer, global_step=global_step)
-        print(f'{split} uer: {uer}')
-        print(f'{split} wer: {wer}')
+        ###
+        logger.asrWrite(split, loss, uer, wer, global_step)
+        ###
 
         save_names = []
         if split == 'dev-clean' and wer < self.best_score:
