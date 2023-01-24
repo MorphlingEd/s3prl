@@ -9,8 +9,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from pretrain.distiller.dataset import OnlineWaveDataset
-from upstream.distiller.model import DistillerConfig, DistillerModel
+
+from pretrain.attnDistiller.dataset import OnlineWaveDataset
+from upstream.attnDistiller.model import DistillerConfig, DistillerModel
 
 
 def freeze_model(model):

@@ -14,7 +14,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from ..wav2vec2.wav2vec2_model import (
+# from ..wav2vec2.wav2vec2_model import (
+from .wav2vec2_modules import( # Copy the implementation of modules in current folder for more convenient modifications
     EXTRACTOR_MODE_CHOICES,
     LAYER_TYPE_CHOICES,
     MASKING_DISTRIBUTION_CHOICES,
@@ -278,6 +279,7 @@ class HubertConfig:
     fp16: bool = field(default=False, metadata={"help": "If fp16 is being used"})
 
 
+
 class HubertModel(torch.nn.Module):
     def __init__(
         self,
@@ -287,6 +289,7 @@ class HubertModel(torch.nn.Module):
     ) -> None:
         super().__init__()
         logger.info(f"HubertModel Config: {cfg}")
+
 
         feature_enc_layers = eval(cfg.conv_feature_layers)  # noqa
         self.embed = feature_enc_layers[-1][0]
@@ -470,9 +473,11 @@ class HubertModel(torch.nn.Module):
         padding_mask: Optional[torch.Tensor] = None,
         mask: bool = True,
         features_only: bool = False,
-        output_layer: Optional[int] = None,
+        output_layer: Optional[int] = None, # i.e. the number of layer above which the hidden representations/attention maps should be output
+        attn_selected: List[int] = None # For selecting which layers output attention maps
     ) -> Dict[str, torch.Tensor]:
         """output layer is 1-based"""
+
         features = self.forward_features(source)
         if target_list is not None:
             features, target_list = self.forward_targets(features, target_list)
@@ -497,6 +502,18 @@ class HubertModel(torch.nn.Module):
         else:
             x = features
             mask_indices = None
+
+        ################################################
+        if attn_selected is not None:
+            pred, attnMaps = self.encoder(
+                x,
+                padding_mask=padding_mask,
+                layer=None if output_layer is None else output_layer - 1,
+                attn_selected=attn_selected
+            )
+            attnMaps = [attnMap for attnMap in attnMaps]
+            return pred, attnMaps
+        ################################################
 
         # feature: (B, T, D), float
         # target: (B, T), long

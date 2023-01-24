@@ -10,7 +10,7 @@ from s3prl.util.download import _urls_to_filepaths
 from .expert import UpstreamExpert as _UpstreamExpert
 
 
-def distiller_local(ckpt, *args, **kwargs):
+def attn_distiller_local(ckpt, *args, **kwargs):
     """
     The model from local ckpt
         ckpt (str): PATH
@@ -19,23 +19,23 @@ def distiller_local(ckpt, *args, **kwargs):
     return _UpstreamExpert(ckpt, *args, **kwargs)
 
 
-def distiller_url(ckpt, refresh=False, *args, **kwargs):
+def attn_distiller_url(ckpt, refresh=False, *args, **kwargs):
     """
     The model from url
         ckpt (str): URL
         refresh (bool): whether to download ckpt/config again if existed
     """
-    return distiller_local(_urls_to_filepaths(ckpt, refresh=refresh), *args, **kwargs)
+    return attn_distiller_local(_urls_to_filepaths(ckpt, refresh=refresh), *args, **kwargs)
 
 
-def distilhubert(refresh=False, *args, **kwargs):
+def attn_distilhubert(refresh=False, *args, **kwargs):
     """
     DistilHuBERT
     """
-    return distilhubert_base(refresh=refresh, *args, **kwargs)
+    return attn_distilhubert_base(refresh=refresh, *args, **kwargs)
 
 
-def distilhubert_base(refresh=False, *args, **kwargs):
+def attn_distilhubert_base(refresh=False, *args, **kwargs):
     """
     DistilHuBERT Base
     Default model in https://arxiv.org/abs/2110.01900
@@ -43,4 +43,4 @@ def distilhubert_base(refresh=False, *args, **kwargs):
     kwargs[
         "ckpt"
     ] = "https://www.dropbox.com/s/hcfczqo5ao8tul3/disilhubert_ls960_4-8-12.ckpt?dl=1"
-    return distiller_url(refresh=refresh, *args, **kwargs)
+    return attn_distiller_url(refresh=refresh, *args, **kwargs)

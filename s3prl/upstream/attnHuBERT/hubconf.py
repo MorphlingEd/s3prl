@@ -17,7 +17,7 @@ from filelock import FileLock
 
 from s3prl.util.download import _urls_to_filepaths
 
-from .convert import load_and_convert_fairseq_ckpt
+from .convert import load_and_convert_fairseq_ckpt, load_converted_model
 from .expert import LegacyUpstreamExpert as _LegacyUpstreamExpert
 from .expert import UpstreamExpert as _UpstreamExpert
 
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 NEW_ENOUGH_SECS = 2.0
 
 
-def hubert_custom(
+def attn_hubert_custom(
     ckpt: str,
     legacy: bool = False,
     fairseq: bool = False,
@@ -63,26 +63,26 @@ def hubert_custom(
     if legacy:
         return _LegacyUpstreamExpert(ckpt, **kwargs)
     else:
-        return _UpstreamExpert(ckpt, **kwargs)
+        # return _UpstreamExpert(ckpt, **kwargs) 
+        return load_converted_model(ckpt)
+
+def attn_hubert_local(*args, **kwargs):
+    return attn_hubert_custom(*args, **kwargs)
 
 
-def hubert_local(*args, **kwargs):
-    return hubert_custom(*args, **kwargs)
+def attn_hubert_url(*args, **kwargs):
+    return attn_hubert_custom(*args, **kwargs)
 
 
-def hubert_url(*args, **kwargs):
-    return hubert_custom(*args, **kwargs)
-
-
-def hubert(refresh=False, *args, **kwargs):
+def attn_hubert(refresh=False, *args, **kwargs):
     """
     The default model - Base
         refresh (bool): whether to download ckpt/config again if existed
     """
-    return hubert_base(refresh=refresh, *args, **kwargs)
+    return attn_hubert_base(refresh=refresh, *args, **kwargs)
 
 
-def hubert_base(refresh=False, legacy=False, **kwargs):
+def attn_hubert_base(refresh=False, legacy=False, **kwargs):
     """
     The Base model
         refresh (bool): whether to download ckpt/config again if existed
@@ -92,10 +92,10 @@ def hubert_base(refresh=False, legacy=False, **kwargs):
         kwargs[
             "ckpt"
         ] = "https://huggingface.co/s3prl/converted_ckpts/resolve/main/hubert_base_ls960.pt"
-    return hubert_custom(refresh=refresh, legacy=legacy, **kwargs)
+    return attn_hubert_custom(refresh=refresh, legacy=legacy, **kwargs)
 
 
-def hubert_large_ll60k(refresh=False, legacy=False, **kwargs):
+def attn_hubert_large_ll60k(refresh=False, legacy=False, **kwargs):
     """
     The Large model
         refresh (bool): whether to download ckpt/config again if existed
@@ -105,10 +105,10 @@ def hubert_large_ll60k(refresh=False, legacy=False, **kwargs):
         kwargs[
             "ckpt"
         ] = "https://huggingface.co/s3prl/converted_ckpts/resolve/main/hubert_large_ll60k.pt"
-    return hubert_custom(refresh=refresh, legacy=legacy, **kwargs)
+    return attn_hubert_custom(refresh=refresh, legacy=legacy, **kwargs)
 
 
-def hubert_base_robust_mgr(refresh=False, legacy=False, **kwargs):
+def attn_hubert_base_robust_mgr(refresh=False, legacy=False, **kwargs):
     """
     The Base model, continually trained with Libri 960 hr with Musan noise, Gaussian noise and Reverberation.
         refresh (bool): whether to download ckpt/config again if existed
@@ -120,11 +120,11 @@ def hubert_base_robust_mgr(refresh=False, legacy=False, **kwargs):
         kwargs[
             "ckpt"
         ] = "https://huggingface.co/s3prl/converted_ckpts/resolve/main/HuBERT_base_robust_mgr_best_loss_2.7821.pt"
-    return hubert_custom(refresh=refresh, legacy=legacy, **kwargs)
+    return attn_hubert_custom(refresh=refresh, legacy=legacy, **kwargs)
 
 
-def mhubert_base_vp_en_es_fr_it3(refresh=False, **kwds):
+def attn_mhubert_base_vp_en_es_fr_it3(refresh=False, **kwds):
     kwds[
         "ckpt"
     ] = "https://huggingface.co/s3prl/converted_ckpts/resolve/main/mhubert_base_vp_en_es_fr_it3.pt"
-    return hubert_custom(refresh=refresh, **kwds)
+    return attn_hubert_custom(refresh=refresh, **kwds)

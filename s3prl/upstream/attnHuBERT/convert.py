@@ -4,8 +4,9 @@ from typing import List
 
 import torch
 
-import s3prl
-from s3prl.upstream.hubert.hubert_model import (
+# import s3prl
+# from s3prl.upstream.hubert.hubert_model import (
+from upstream.attnHuBERT.hubert_model import (
     HubertConfig,
     HubertModel,
     HubertPretrainingConfig,
