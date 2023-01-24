@@ -10,7 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from s3prl.upstream.wav2vec2.wav2vec2_model import (
+# from s3prl.upstream.wav2vec2.wav2vec2_model import (
+from ..attnHuBERT.wav2vec2_modules import (
     ConvFeatureExtractionModel,
     GradMultiply,
     MultiheadAttention,
@@ -208,7 +209,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
             x, attn = self.forward_self_attn(
                 x,
                 self_attn_mask=self_attn_mask,
-                need_weights=False,
+                need_weights=need_weights, #False,
                 self_attn_padding_mask=self_attn_padding_mask,
             )
             x = self.dropout1(x)
@@ -290,9 +291,14 @@ class TransformerEncoder(nn.Module):
 
         self.apply(init_bert_params)
 
-    def forward(self, x, padding_mask=None, attn_mask=None, get_hidden=False):
+    def forward(self, 
+                x, 
+                padding_mask=None, 
+                attn_mask=None, 
+                get_hidden=False,
+                attn_selected=None):
         x, layer_results = self.extract_features(
-            x, padding_mask, attn_mask, get_hidden=get_hidden
+            x, padding_mask, attn_mask, get_hidden=get_hidden, attn_selected=attn_selected
         )
 
         if self.layer_norm_first:
@@ -300,7 +306,11 @@ class TransformerEncoder(nn.Module):
 
         return x, layer_results
 
-    def extract_features(self, x, padding_mask=None, attn_mask=None, get_hidden=False):
+    def extract_features(self, x, 
+                        padding_mask=None, 
+                        attn_mask=None, 
+                        get_hidden=False, 
+                        attn_selected=None):
 
         if padding_mask is not None:
             x[padding_mask] = 0
@@ -316,6 +326,21 @@ class TransformerEncoder(nn.Module):
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
+
+        #################################################
+        if attn_selected is not None:
+            attn_maps = []
+            for i, layer in enumerate(self.layers):
+                x, attn_map = layer(
+                    x,
+                    self_attn_padding_mask=padding_mask,
+                    need_weights=True
+                )
+                if (i+1) in attn_selected:
+                    attn_maps.append(attn_map)
+            return x, attn_maps
+        ################################################
+
 
         layer_results = []
         for i, layer in enumerate(self.layers):

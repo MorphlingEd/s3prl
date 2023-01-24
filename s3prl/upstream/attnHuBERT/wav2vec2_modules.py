@@ -3093,7 +3093,7 @@ class TransformerEncoder(nn.Module):
                     self_attn_padding_mask=padding_mask,
                     need_weights=True
                 )
-                if i in attn_selected:
+                if (i+1) in attn_selected: # note that i starts from 0
                     attn_maps.append(attn_map)
             return x, attn_maps
         ###################################################

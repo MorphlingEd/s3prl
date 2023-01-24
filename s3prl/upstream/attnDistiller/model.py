@@ -102,36 +102,13 @@ class DistillerModel(nn.Module):
         self.task_emb_type = config.task_emb_type
 
         final_emb_size = config.encoder_embed_dim
-        if self.task_emb_type == "add":
-            self.task_embedding = nn.Embedding(config.n_tasks, config.encoder_embed_dim)
-            nn.init.normal_(self.task_embedding.weight, 0.0, 0.1)
-        elif self.task_emb_type == "concat":
-            assert config.task_emb_size > 0
-            feat_emb_dim += config.task_emb_size
-            self.task_embedding = nn.Embedding(config.n_tasks, config.task_emb_size)
-        elif self.task_emb_type == "concat-last":
-            assert config.task_emb_size > 0
-            self.task_embedding = nn.Embedding(config.n_tasks, config.task_emb_size)
-            final_emb_size += config.task_emb_size
-        elif self.task_emb_type == "expand-last":
-            self.pred_layer_id = config.pred_layer_id
-            assert self.n_tasks == len(self.pred_layer_id)
-            print(
-                f"[DistillerModel] - Expands the output dimension by {self.n_tasks} times"
-            )
-            print(f"[DistillerModel] - Pred layers: {self.pred_layer_id}")
-        elif self.task_emb_type == "self-hidden":
-            self.pred_layer_id = config.pred_layer_id
-            assert self.n_tasks == len(self.pred_layer_id)
-            assert self.n_tasks == config.encoder_layers + 1
-            print("[DistillerModel] - Predicting with self-hidden layers")
-            print(f"[DistillerModel] - Pred layers: {self.pred_layer_id}")
-        elif self.task_emb_type == "none":
-            print(
-                f"[DistillerModel] - Disabled task embedding (predicts only layer {self.n_tasks})"
-            )
-        else:
-            raise NotImplementedError(f"Unknown task emb type {self.task_emb_type}")
+        # ------------- Original statements for `expand-last` ------------------
+        self.pred_layer_id = config.pred_layer_id
+        assert self.n_tasks == len(self.pred_layer_id)
+        print(
+            f"[DistillerModel] - Expands the output dimension by {self.n_tasks} times"
+        )
+        print(f"[DistillerModel] - Pred layers: {self.pred_layer_id}")
 
         self.post_extract_proj = (
             nn.Linear(feat_emb_dim, config.encoder_embed_dim)
@@ -144,26 +121,22 @@ class DistillerModel(nn.Module):
         else:
             self.encoder = nn.GELU()
 
-        final_dim = config.final_dim * (
-            1 if self.task_emb_type != "expand-last" else self.n_tasks
-        )
+        ###############################################
+        final_dim = config.final_dim * self.n_tasks
+        ###############################################
 
         inter_dim = config.out_layer_inter_dim
         inter_dim = inter_dim if inter_dim > 0 else final_emb_size
 
+        #########################################################
         print(f"[DistillerModel] - Out layer type: {config.out_layer_type}")
-        if config.out_layer_type == "expand-last":
-            assert self.task_emb_type == "expand-last"
-            print(f"[DistillerModel] - Inter dim = {inter_dim}")
-            self.output_layer = nn.Sequential(
-                nn.Linear(final_emb_size, inter_dim * self.n_tasks),
-                nn.GELU(),
-                SplitLinear(inter_dim, self.n_tasks, config.final_dim),
-            )
-        elif config.out_layer_type in {"none", "self-hidden"}:
-            self.output_layer = None
-        else:
-            raise NotImplementedError(f"Unknown out layer type {config.out_layer_type}")
+        print(f"[DistillerModel] - Inter dim = {inter_dim}")
+        self.output_layer = nn.Sequential(
+            nn.Linear(final_emb_size, inter_dim * self.n_tasks),
+            nn.GELU(),
+            SplitLinear(inter_dim, self.n_tasks, config.final_dim),
+        )
+        #########################################################
 
     def forward_feature(self, wave, pad_mask):
         """Forward feature extractor"""
@@ -181,7 +154,13 @@ class DistillerModel(nn.Module):
 
         return feat, pad_mask
 
-    def forward(self, wave, pad_mask, task_id=None, get_hidden=False, no_pred=False):
+    def forward(self, 
+                wave, 
+                pad_mask, 
+                task_id=None, 
+                get_hidden=False, 
+                no_pred=False,
+                attn_selected=None):
         """
         Forward function
         Input:
@@ -192,43 +171,17 @@ class DistillerModel(nn.Module):
 
         feat, pad_mask = self.forward_feature(wave, pad_mask)
 
-        if self.task_emb_type not in ["none", "expand-last", "self-hidden"]:
-            if task_id is None:
-                task_id = self.generate_task_id(feat.device)
-            elif isinstance(task_id, list):
-                task_id = torch.LongTensor(task_id).to(feat.device)
-            task_embs = self.task_embedding(task_id)
-            # N x D
-            n_sz = len(task_id)
-        else:
-            n_sz = 1
+        ############################################
+        n_sz = 1
         b_sz, t_sz, _ = feat.shape
-
-        if self.task_emb_type == "add":
-            # Add embs to feature
-            if self.post_extract_proj is not None:
+        
+        if self.post_extract_proj is not None:
                 feat_final = self.post_extract_proj(feat)
-            else:
-                feat_final = feat
-            feat_final = feat_final.unsqueeze(1) + task_embs.unsqueeze(0).unsqueeze(2)
-        elif self.task_emb_type == "concat":
-            # Concatenates embs to feature
-            feat_final = torch.cat(
-                [
-                    feat.unsqueeze(1).expand(-1, n_sz, -1, -1),
-                    task_embs.unsqueeze(0).unsqueeze(2).expand(b_sz, -1, t_sz, -1),
-                ],
-                dim=-1,
-            )
-            if self.post_extract_proj is not None:
-                feat_final = self.post_extract_proj(feat_final)
         else:
-            if self.post_extract_proj is not None:
-                feat_final = self.post_extract_proj(feat)
-            else:
-                feat_final = feat
-            feat_final = feat_final.unsqueeze(1)
+            feat_final = feat
+        feat_final = feat_final.unsqueeze(1)
         # feat_final: B x N x T x D or B x 1 x T x D
+        ############################################
 
         pad_mask = pad_mask.unsqueeze(1).expand(-1, n_sz, -1).reshape(b_sz * n_sz, t_sz)
         # BN x T
@@ -237,25 +190,28 @@ class DistillerModel(nn.Module):
 
         layer_hiddens = []
         if self.config.encoder_layers > 0:
-            get_hidden_tmp = (
-                True if (self.task_emb_type == "self-hidden") else get_hidden
-            )
+            ##########################################
             hidden, layer_hiddens = self.encoder(
-                feat_final, ~pad_mask.bool(), get_hidden=get_hidden_tmp
+                feat_final, 
+                ~pad_mask.bool(), 
+                get_hidden=get_hidden,
+                attn_selected=attn_selected,
             )
+            ###########################################
         else:
             hidden = self.encoder(feat_final)
 
+        ###############################################
         if not no_pred:
-            if self.task_emb_type == "self-hidden":
-                pred = torch.stack([feat_final] + layer_hiddens, dim=1)
-            else:
-                pred = self.output_layer(hidden).reshape(b_sz, n_sz, t_sz, -1)
+            pred = self.output_layer(hidden).reshape(b_sz, n_sz, t_sz, -1)
             # B x N x T x D
         else:
             pred = None
+        ##################################################
 
-        if (not no_pred) and self.task_emb_type == "expand-last":
+        ##############################################
+        if (not no_pred):
+        ###########################################
             assert n_sz == 1, n_sz
             pred = (
                 pred.squeeze(1)
@@ -264,7 +220,7 @@ class DistillerModel(nn.Module):
             )
             # B x N x T x D
 
-        if get_hidden:
+        if get_hidden or (attn_selected is not None):
             return feat, feat_final, pred, pad_mask, layer_hiddens
         else:
             return feat, feat_final, pred, pad_mask
@@ -286,3 +242,37 @@ class DistillerModel(nn.Module):
 
     def generate_task_id(self, device):
         return torch.arange(self.n_tasks, device=device, dtype=torch.long)
+
+
+
+# -------------------------------- Removed ----------------------------------
+        # if self.task_emb_type == "add":
+        #     self.task_embedding = nn.Embedding(config.n_tasks, config.encoder_embed_dim)
+        #     nn.init.normal_(self.task_embedding.weight, 0.0, 0.1)
+        # elif self.task_emb_type == "concat":
+        #     assert config.task_emb_size > 0
+        #     feat_emb_dim += config.task_emb_size
+        #     self.task_embedding = nn.Embedding(config.n_tasks, config.task_emb_size)
+        # elif self.task_emb_type == "concat-last":
+        #     assert config.task_emb_size > 0
+        #     self.task_embedding = nn.Embedding(config.n_tasks, config.task_emb_size)
+        #     final_emb_size += config.task_emb_size
+        # elif self.task_emb_type == "expand-last":
+        #     self.pred_layer_id = config.pred_layer_id
+        #     assert self.n_tasks == len(self.pred_layer_id)
+        #     print(
+        #         f"[DistillerModel] - Expands the output dimension by {self.n_tasks} times"
+        #     )
+        #     print(f"[DistillerModel] - Pred layers: {self.pred_layer_id}")
+        # elif self.task_emb_type == "self-hidden":
+        #     self.pred_layer_id = config.pred_layer_id
+        #     assert self.n_tasks == len(self.pred_layer_id)
+        #     assert self.n_tasks == config.encoder_layers + 1
+        #     print("[DistillerModel] - Predicting with self-hidden layers")
+        #     print(f"[DistillerModel] - Pred layers: {self.pred_layer_id}")
+        # elif self.task_emb_type == "none":
+        #     print(
+        #         f"[DistillerModel] - Disabled task embedding (predicts only layer {self.n_tasks})"
+        #     )
+        # else:
+        #     raise NotImplementedError(f"Unknown task emb type {self.task_emb_type}")
