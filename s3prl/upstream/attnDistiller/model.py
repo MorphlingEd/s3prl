@@ -69,6 +69,19 @@ class DistillerConfig:
             config.get("pred_layer_id", range(1, self.n_tasks + 1))
         )
 
+
+        ###############################################
+        self.std_attns = int(config.get("std_attns", 1))
+        self.tch_attns = int(config.get("tch_attns", 3))
+
+        self.attn_selected = list(
+            config.get("attn_selected", [2])
+        )
+        self.attn_selected_teacher = list(
+            config.get(" attn_selected_teacher", [4, 8, 12])
+        )
+        ###############################################
+
         # Initialization
         self.init_teacher_conv_layers = bool(
             config.get("init_teacher_conv_layers", False)
@@ -159,8 +172,7 @@ class DistillerModel(nn.Module):
                 pad_mask, 
                 task_id=None, 
                 get_hidden=False, 
-                no_pred=False,
-                attn_selected=None):
+                no_pred=False):
         """
         Forward function
         Input:
@@ -176,7 +188,7 @@ class DistillerModel(nn.Module):
         b_sz, t_sz, _ = feat.shape
         
         if self.post_extract_proj is not None:
-                feat_final = self.post_extract_proj(feat)
+            feat_final = self.post_extract_proj(feat)
         else:
             feat_final = feat
         feat_final = feat_final.unsqueeze(1)
@@ -190,28 +202,22 @@ class DistillerModel(nn.Module):
 
         layer_hiddens = []
         if self.config.encoder_layers > 0:
-            ##########################################
             hidden, layer_hiddens = self.encoder(
                 feat_final, 
                 ~pad_mask.bool(), 
-                get_hidden=get_hidden,
-                attn_selected=attn_selected,
+                get_hidden=get_hidden, 
+                attn_selected=self.config.attn_selected, ################################
             )
-            ###########################################
         else:
             hidden = self.encoder(feat_final)
 
-        ###############################################
         if not no_pred:
             pred = self.output_layer(hidden).reshape(b_sz, n_sz, t_sz, -1)
             # B x N x T x D
         else:
             pred = None
-        ##################################################
 
-        ##############################################
         if (not no_pred):
-        ###########################################
             assert n_sz == 1, n_sz
             pred = (
                 pred.squeeze(1)
@@ -220,7 +226,7 @@ class DistillerModel(nn.Module):
             )
             # B x N x T x D
 
-        if get_hidden or (attn_selected is not None):
+        if get_hidden or (self.config.attn_selected is not None):
             return feat, feat_final, pred, pad_mask, layer_hiddens
         else:
             return feat, feat_final, pred, pad_mask
@@ -242,37 +248,3 @@ class DistillerModel(nn.Module):
 
     def generate_task_id(self, device):
         return torch.arange(self.n_tasks, device=device, dtype=torch.long)
-
-
-
-# -------------------------------- Removed ----------------------------------
-        # if self.task_emb_type == "add":
-        #     self.task_embedding = nn.Embedding(config.n_tasks, config.encoder_embed_dim)
-        #     nn.init.normal_(self.task_embedding.weight, 0.0, 0.1)
-        # elif self.task_emb_type == "concat":
-        #     assert config.task_emb_size > 0
-        #     feat_emb_dim += config.task_emb_size
-        #     self.task_embedding = nn.Embedding(config.n_tasks, config.task_emb_size)
-        # elif self.task_emb_type == "concat-last":
-        #     assert config.task_emb_size > 0
-        #     self.task_embedding = nn.Embedding(config.n_tasks, config.task_emb_size)
-        #     final_emb_size += config.task_emb_size
-        # elif self.task_emb_type == "expand-last":
-        #     self.pred_layer_id = config.pred_layer_id
-        #     assert self.n_tasks == len(self.pred_layer_id)
-        #     print(
-        #         f"[DistillerModel] - Expands the output dimension by {self.n_tasks} times"
-        #     )
-        #     print(f"[DistillerModel] - Pred layers: {self.pred_layer_id}")
-        # elif self.task_emb_type == "self-hidden":
-        #     self.pred_layer_id = config.pred_layer_id
-        #     assert self.n_tasks == len(self.pred_layer_id)
-        #     assert self.n_tasks == config.encoder_layers + 1
-        #     print("[DistillerModel] - Predicting with self-hidden layers")
-        #     print(f"[DistillerModel] - Pred layers: {self.pred_layer_id}")
-        # elif self.task_emb_type == "none":
-        #     print(
-        #         f"[DistillerModel] - Disabled task embedding (predicts only layer {self.n_tasks})"
-        #     )
-        # else:
-        #     raise NotImplementedError(f"Unknown task emb type {self.task_emb_type}")

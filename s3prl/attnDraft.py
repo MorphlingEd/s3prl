@@ -9,6 +9,7 @@ matplotlib.use('Agg')
 import torch
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
+import torch.nn.functional as F
 
 from pretrain.attnDistiller.dataset import OnlineWaveDataset
 
@@ -74,26 +75,31 @@ print(pad_mask.size())
 
 
 
-# print("-------------- Loading HuBERT -------------------------")
-# hubert_ckpt = os.path.join(model_dir, 'hubert_converted.ckpt')
-# hubert = HuBERTExpert(hubert_ckpt)
-# hubert.model = hubert.model.to(device)
-# print(type(hubert))
+print("-------------- Loading HuBERT -------------------------")
+hubert_ckpt = os.path.join(model_dir, 'hubert_converted.ckpt')
+hubert = HuBERTExpert(hubert_ckpt)
+hubert.model = hubert.model.to(device)
+print(type(hubert))
 
 
-# print("-------------- Feeding Data to HuBERT ------------------------------")
-# attn_selected_teacher = [4, 8, 12]
-# with torch.no_grad():
-#     wave_orig = [wave.to(wave_input.device) for wave in wave_orig]
-#     with torch.cuda.amp.autocast(False):
-#         results = hubert(wave_orig, attn_selected_teacher)
+print("-------------- Feeding Data to HuBERT ------------------------------")
+attn_selected_teacher = [4, 8, 12]
+with torch.no_grad():
+    wave_orig = [wave.to(wave_input.device) for wave in wave_orig]
+    with torch.cuda.amp.autocast(False):
+        results = hubert(wave_orig, attn_selected_teacher)
 
-# attnMaps = results["attention_maps"]
-# print(len(attnMaps))
-# for i, attnMap in enumerate(attnMaps):
-#     print(f"-------------- Attention Map from HuBERT layer {i} -----------------------------")
-#     print(attnMap.size())
-#     print(getsizeof(attnMap))
+attnMapsTeacher = results["attention_maps"]
+print(len(attnMapsTeacher))
+for i, attnMap in zip(attn_selected_teacher, attnMapsTeacher):
+    print(f"-------------- Attention Map from HuBERT layer {i} -----------------------------")
+    print(attnMap.size())
+    print(getsizeof(attnMap))
+
+print('---------------- Size of teacher\'s final outputs -----------------')
+pred_teacher = results["last_hidden"]
+print(pred_teacher.size())
+print(torch.transpose(pred_teacher, 0, 1).size())
 
 
 print("-------------- Loading Distiller -------------------------")
@@ -106,14 +112,30 @@ distiller = distiller.to(device)
 
 
 print("-------------- Feeding Data to Distiller ---------------------------")
-attn_selected_student = [1, 2]
+attn_selected_student = [2]
 with torch.no_grad():
-    feat, feat_final, pred, pad_mask, attnMapsDistiller = distiller(wave_input, 
-                                                pad_mask,
-                                                attn_selected=attn_selected_student)
+    feat, feat_final, pred, pad_mask, attnMapsDistiller = distiller(wave_input, pad_mask)
 
 print(len(attnMapsDistiller))
-for i, attnMap in enumerate(attnMapsDistiller):
+for i, attnMap in zip(attn_selected_student ,attnMapsDistiller):
     print(f"-------------- Attention Map from Distiller layer {i} -----------------------------")
     print(attnMap.size())
     print(getsizeof(attnMap))
+
+print('---------------- Size of student\'s outputs -------------------------')
+print(f"feat: {feat.size()}") # B x T x feat_dim (after convolutional layers)
+print(f"feat_final: {feat_final.size()}") # B x T x hidden_dim (D)
+print(f"pred: {pred.size()}") # B x N x T x hidden_dim (but not sure what N is)
+
+
+print('-------------------- Calculating the loss ---------------------------')
+kl_loss = torch.nn.KLDivLoss(reduction="batchmean")
+
+loss = 0
+for i, attn_teacher in zip(attn_selected_teacher, attnMapsTeacher):
+    for j, attn_student in zip(attn_selected_student, attnMapsDistiller):
+        kl = kl_loss(torch.log(attn_student + 1e-10), attn_teacher)
+        print(f"KL divergence between attention maps from student layer {j} and teacher layer {i} is: {kl}")
+        loss += kl
+
+print(f"total loss: {loss}")

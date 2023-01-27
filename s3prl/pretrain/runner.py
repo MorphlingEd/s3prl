@@ -20,7 +20,6 @@ from collections import defaultdict
 #-------------#
 import torch
 import torch.nn as nn
-# from tensorboardX import SummaryWriter
 import numpy as np
 #-------------#
 from optimizers import get_optimizer, get_grouped_parameters

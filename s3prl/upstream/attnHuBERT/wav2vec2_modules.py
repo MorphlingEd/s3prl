@@ -3069,16 +3069,16 @@ class TransformerEncoder(nn.Module):
             x = self.layer_norm(x)
 
         # pad to the sequence length dimension
-        x, pad_length = pad_to_multiple(
-            x, self.required_seq_len_multiple, dim=-2, value=0
-        )
-        if pad_length > 0 and padding_mask is None:
-            padding_mask = x.new_zeros((x.size(0), x.size(1)), dtype=torch.bool)
-            padding_mask[:, -pad_length:] = True
-        else:
-            padding_mask, _ = pad_to_multiple(
-                padding_mask, self.required_seq_len_multiple, dim=-1, value=True
-            )
+        # x, pad_length = pad_to_multiple(
+        #     x, self.required_seq_len_multiple, dim=-2, value=0
+        # )
+        # if pad_length > 0 and padding_mask is None:
+        #     padding_mask = x.new_zeros((x.size(0), x.size(1)), dtype=torch.bool)
+        #     padding_mask[:, -pad_length:] = True
+        # else:
+        #     padding_mask, _ = pad_to_multiple(
+        #         padding_mask, self.required_seq_len_multiple, dim=-1, value=True
+        #     )
         x = F.dropout(x, p=self.dropout, training=self.training)
 
         # B x T x C -> T x B x C

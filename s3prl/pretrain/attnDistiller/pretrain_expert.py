@@ -1,8 +1,9 @@
 """
-    Pre-train expert for distiller
-    Author: Heng-Jui Chang (https://github.com/vectominist)
+    Pre-train expert for attention-based distiller
+    Author: Wenxuan Li
 """
 
+import os
 from easydict import EasyDict as edict
 import yaml
 import torch
@@ -12,6 +13,7 @@ from torch.utils.data import DataLoader
 
 from pretrain.attnDistiller.dataset import OnlineWaveDataset
 from upstream.attnDistiller.model import DistillerConfig, DistillerModel
+from upstream.attnHuBERT.expert import UpstreamExpert as HuBERTExpert
 
 
 def freeze_model(model):
@@ -216,7 +218,11 @@ class DistillerForPretrain(nn.Module):
 
         self.teacher_config = teacher_config
         # teacher = torch.hub.load("s3prl/s3prl", teacher_config.model)
-        teacher = torch.hub.load(repo_or_dir="..",model="hubert_base", source="local")
+        # teacher = torch.hub.load(repo_or_dir="..",model="attnhubert_base", source="local")
+
+        teacher_model_dir = '/home/s1973609/repos/s3prl/s3prl/hubModels/'
+        hubert_ckpt = os.path.join(teacher_model_dir, 'hubert_converted.ckpt')
+        teacher = HuBERTExpert(hubert_ckpt)
 
         if (
             teacher_config.model.find("hubert") >= 0
@@ -237,12 +243,15 @@ class DistillerForPretrain(nn.Module):
             )
         )
 
-        if config.loss_type == "l1":
-            self.loss_func = nn.L1Loss(reduction="none")
-        elif config.loss_type == "l2":
-            self.loss_func = nn.MSELoss(reduction="none")
-        else:
-            raise NotImplementedError(config.loss_type)
+        ####################################################
+        # if config.loss_type == "l1":
+        #     self.loss_func = nn.L1Loss(reduction="none")
+        # elif config.loss_type == "l2":
+        #     self.loss_func = nn.MSELoss(reduction="none")
+        # else:
+        #     raise NotImplementedError(config.loss_type)
+        self.loss_func = nn.KLDivLoss(reduction="batchmean")
+        ####################################################
 
         self.cosine_loss = config.cosine_loss
         if self.cosine_loss > 0:
@@ -290,74 +299,67 @@ class DistillerForPretrain(nn.Module):
         """
 
         # Forward model
-        feat, feat_final, pred, pad_mask = self.distiller(wave_input, pad_mask)
+        student_outputs = self.distiller(wave_input, pad_mask)
+        feat, feat_final, pred, pad_mask, attn_maps_student = student_outputs
 
         with torch.no_grad():
             wave_orig = [wave.to(wave_input.device) for wave in wave_orig]
             with torch.cuda.amp.autocast(False):
-                teacher_hiddens = self.teacher(wave_orig)
-            if self.config.task_emb_type == "none":
-                teacher_hiddens = teacher_hiddens["hidden_states"][self.config.n_tasks]
-                teacher_hiddens = teacher_hiddens.unsqueeze(1)
-            else:
-                if self.config.task_emb_type in ["expand-last", "hnet", "self-hidden"]:
-                    teacher_hiddens = [
-                        teacher_hiddens["hidden_states"][i]
-                        for i in self.distiller.pred_layer_id
-                    ]
-                else:
-                    teacher_hiddens = teacher_hiddens["hidden_states"][1:]
-                teacher_hiddens = torch.stack(teacher_hiddens, dim=1)  # B x N x T x D
+                teacher_outputs = self.teacher(wave_orig, 
+                                    attn_selected=self.distiller.config.attn_selected_teacher)
+            attn_maps_teacher = teacher_outputs["attention_maps"]
+
+        # # Compute all objectives
+        # (
+        #     total_loss,
+        #     rec_loss,
+        #     rec_layer_loss,
+        #     feat_pen,
+        #     sim_loss,
+        #     sim_layer_loss,
+        # ) = self.compute_loss(feat, pred, teacher_hiddens, return_other)
 
         # Compute all objectives
         (
             total_loss,
-            rec_loss,
-            rec_layer_loss,
-            feat_pen,
-            sim_loss,
-            sim_layer_loss,
-        ) = self.compute_loss(feat, pred, teacher_hiddens, return_other)
+            attn_loss,
+            feat_loss
+        ) = self.compute_attn_loss(feat, attn_maps_student, attn_maps_teacher)
 
         if return_other:
             with torch.no_grad():
                 other_res = {
-                    "rec_loss": rec_loss,
-                    "feat_pen": feat_pen,
-                    "sim_loss": sim_loss,
-                    "norm_feat_final": feat_final.pow(2).mean(),
+                    "attn_loss": attn_loss,
+                    "feat_pen": feat_loss,
                 }
-                teacher_norm = torch.abs(teacher_hiddens).mean((0, 2, 3))
-                if self.config.task_emb_type == "none":
-                    other_res[f"rec_l{self.config.n_tasks}"] = rec_layer_loss[0]
-                    other_res[f"tar_norm_l{self.config.n_tasks}"] = teacher_norm[0]
-                    if sim_layer_loss is not None:
-                        other_res[f"sim_l{self.config.n_tasks}"] = sim_layer_loss[0]
-                else:
-                    for i in range(self.config.n_tasks):
-                        layer_id = i + 1
-                        if self.config.task_emb_type in [
-                            "expand-last",
-                            "hnet",
-                            "self-hidden",
-                        ]:
-                            layer_id = self.distiller.pred_layer_id[i]
-                        other_res[f"rec_l{layer_id}"] = rec_layer_loss[i]
-                        other_res[f"tar_norm_l{layer_id}"] = teacher_norm[i]
-                        if sim_layer_loss is not None:
-                            other_res[f"sim_l{layer_id}"] = sim_layer_loss[i]
-                    if self.config.task_emb_type not in [
-                        "expand-last",
-                        "hnet",
-                        "self-hidden",
-                    ]:
-                        other_res[
-                            "norm_task_emb"
-                        ] = self.distiller.task_embedding.weight.pow(2).mean()
         else:
             other_res = None
 
         return total_loss, other_res
+
+    def compute_attn_loss(self, feat, attn_map_student, attn_map_teacher):
+        """
+        Inputs:
+            attn_map_student: [(B, Num_Heads, T, Hidden_Dim)]
+            attn_map_teacher: [(...) x 3]
+        """
+        total_loss = 0
+
+        ## TODO
+        kl_loss = 0
+        for S_map in attn_map_student:
+            for T_map in attn_map_teacher:
+                kl_loss += self.loss_func(torch.log(S_map + 1e-10), T_map)
+
+        # Feature loss
+        feat_pen = feat.float().pow(2).mean()
+
+        total_loss = (
+            kl_loss
+            + feat_pen * self.config.feat_pen_loss
+        )
+
+        return total_loss, kl_loss, feat_pen
 
     def compute_loss(self, feat, pred, target, return_other=False):
         """
@@ -365,10 +367,10 @@ class DistillerForPretrain(nn.Module):
         Inputs:
             feat: B x T x D
             pred: B x N x T x D
-            target: B x N x T x D
+            target: B x N x T x D (originally teacher's hidden representations)
         """
 
-        # Reconstruction loss
+        # Reconstruction loss (L1 distance in the paper)
         assert pred.shape == target.shape, (pred.shape, target.shape)
         rec_loss = self.loss_func(pred, target)  # B x N x T x D
 
