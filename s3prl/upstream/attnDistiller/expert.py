@@ -15,7 +15,7 @@ class UpstreamExpert(UpstreamBase):
     The Distiller wrapper
     """
 
-    def __init__(self, ckpt, model_config=None, **kwargs):
+    def __init__(self, ckpt, model_config=None, downstream=False, **kwargs):
         super().__init__(**kwargs)
 
         if model_config is not None:
@@ -36,13 +36,14 @@ class UpstreamExpert(UpstreamBase):
         options["ckpt_file"] = ckpt
 
         self.model = PretrainedDistiller(options)
+        self.downstream = downstream
 
     def get_downsample_rates(self, key: str) -> int:
         return 320
 
     def forward(self, wavs, no_pred=False):
         _, feat_final, pred, pad_mask, layer_hidden = self.model(
-            wavs, get_hidden=True, no_pred=no_pred
+            wavs, get_hidden=True, no_pred=no_pred, downstream=self.downstream
         )
         # pred: B x N x T x D
         if not no_pred:

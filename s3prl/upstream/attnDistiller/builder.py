@@ -90,9 +90,9 @@ class DistillerBuilder(nn.Module):
         )  # (batch_size, seq_len)
         return wave, pad_mask  # (x, pad_mask)
 
-    def _forward(self, x, x_len, get_hidden=False, no_pred=False):
+    def _forward(self, x, x_len, get_hidden=False, no_pred=False, downstream=False):
         wave, pad_mask = self.process_input_data(x, x_len)
-        x = self.model(wave, pad_mask, get_hidden=get_hidden, no_pred=no_pred)
+        x = self.model(wave, pad_mask, get_hidden=get_hidden, no_pred=no_pred, downstream=downstream)
 
         # x: (feat, feat_final, pred, pad_mask)
         return x
@@ -129,7 +129,7 @@ class PretrainedDistiller(DistillerBuilder):
                     )
                 )
 
-    def forward(self, wave_inputs, get_hidden=False, no_pred=False):
+    def forward(self, wave_inputs, get_hidden=False, no_pred=False, downstream=False):
         wave_len = [len(wave) for wave in wave_inputs]
         wave_inputs = pad_sequence(wave_inputs, batch_first=True)
         # (batch_size, audio_len)
@@ -137,10 +137,10 @@ class PretrainedDistiller(DistillerBuilder):
         if self.no_grad:
             with torch.no_grad():
                 x = self._forward(
-                    wave_inputs, wave_len, get_hidden=get_hidden, no_pred=no_pred
+                    wave_inputs, wave_len, get_hidden=get_hidden, no_pred=no_pred, downstream=downstream
                 )
         else:
             x = self._forward(
-                wave_inputs, wave_len, get_hidden=get_hidden, no_pred=no_pred
+                wave_inputs, wave_len, get_hidden=get_hidden, no_pred=no_pred, downstream=downstream
             )
         return x

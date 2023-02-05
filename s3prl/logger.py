@@ -12,6 +12,7 @@ class Logger(object):
     def write(self, step, loss, valLoss, records, lr, grad_norm):
         with open(self.loggingFile, 'a') as f:
             f.write(f"Step {step}\n")
+            f.write(f"time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             f.write(splitter)
 
             f.write(f"Loss: {loss} \n")
@@ -23,6 +24,8 @@ class Logger(object):
 
             f.write(f"Learning Rate: {lr}\n")
             f.write(f"Gradient Norm: {grad_norm}\n\n")
+
+        print(f"Step {step} \t Validation Loss: {valLoss}")
 
     def asrWrite(self, split, loss, uer, wer, step):
         t = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

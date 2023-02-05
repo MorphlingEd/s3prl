@@ -511,7 +511,6 @@ class HubertModel(torch.nn.Module):
                 layer=None if output_layer is None else output_layer - 1,
                 attn_selected=attn_selected
             )
-            attnMaps = [attnMap for attnMap in attnMaps]
             return pred, attnMaps
         ################################################
 

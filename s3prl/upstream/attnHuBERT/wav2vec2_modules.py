@@ -3086,7 +3086,7 @@ class TransformerEncoder(nn.Module):
 
         ###################################################
         if attn_selected is not None:
-            attn_maps = []
+            attn_maps = {}
             for i, layer in enumerate(self.layers):
                 x, attn_map = layer(
                     x,
@@ -3094,7 +3094,7 @@ class TransformerEncoder(nn.Module):
                     need_weights=True
                 )
                 if (i+1) in attn_selected: # note that i starts from 0
-                    attn_maps.append(attn_map)
+                    attn_maps[f'layer_{i+1}'] = (x, attn_map)
             return x, attn_maps
         ###################################################
 

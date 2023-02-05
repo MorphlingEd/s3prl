@@ -71,7 +71,7 @@ class UpstreamExpert(UpstreamBase):
         #     mask=None,
         # )
 
-        pred, attnMaps = self.model(
+        pred, layer_results = self.model(
             padded_wav,
             padding_mask=wav_padding_mask,
             mask=None,
@@ -80,7 +80,8 @@ class UpstreamExpert(UpstreamBase):
 
         results = {
             "last_hidden": pred,
-            "attention_maps": attnMaps,
+            "attention_maps": [attn_map for _, attn_map in layer_results.values()],
+            "layer_hiddens": [layer_hidden for layer_hidden, _ in layer_results.values()],
         }
         return results
 

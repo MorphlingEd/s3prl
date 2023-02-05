@@ -4,6 +4,7 @@
 """
 
 import os
+import numpy as np
 from easydict import EasyDict as edict
 import yaml
 import torch
@@ -250,7 +251,7 @@ class DistillerForPretrain(nn.Module):
         #     self.loss_func = nn.MSELoss(reduction="none")
         # else:
         #     raise NotImplementedError(config.loss_type)
-        self.loss_func = nn.KLDivLoss(reduction="batchmean")
+        self.loss_func = nn.KLDivLoss(reduction="none")
         ####################################################
 
         self.cosine_loss = config.cosine_loss
@@ -300,7 +301,9 @@ class DistillerForPretrain(nn.Module):
 
         # Forward model
         student_outputs = self.distiller(wave_input, pad_mask)
-        feat, feat_final, pred, pad_mask, attn_maps_student = student_outputs
+        feat, feat_final, pred, pad_mask, layer_results = student_outputs
+        attn_maps_student = [attn_map for _, attn_map in layer_results]
+        hiddens_student   = [hidden.transpose(0, 1)   for hidden, _   in layer_results]
 
         with torch.no_grad():
             wave_orig = [wave.to(wave_input.device) for wave in wave_orig]
@@ -308,6 +311,7 @@ class DistillerForPretrain(nn.Module):
                 teacher_outputs = self.teacher(wave_orig, 
                                     attn_selected=self.distiller.config.attn_selected_teacher)
             attn_maps_teacher = teacher_outputs["attention_maps"]
+            hiddens_teacher   = [hidden.transpose(0, 1) for hidden in teacher_outputs['layer_hiddens']]
 
         # # Compute all objectives
         # (
@@ -320,16 +324,24 @@ class DistillerForPretrain(nn.Module):
         # ) = self.compute_loss(feat, pred, teacher_hiddens, return_other)
 
         # Compute all objectives
+        feat_lens = torch.sum(pad_mask, dim=1)
         (
             total_loss,
             attn_loss,
+            vr_loss,
             feat_loss
-        ) = self.compute_attn_loss(feat, attn_maps_student, attn_maps_teacher)
+        ) = self.compute_attn_loss(feat, 
+                                feat_lens,
+                                attn_maps_student, 
+                                attn_maps_teacher,
+                                hiddens_student,
+                                hiddens_teacher)
 
         if return_other:
             with torch.no_grad():
                 other_res = {
                     "attn_loss": attn_loss,
+                    "vr_loss":   vr_loss,
                     "feat_pen": feat_loss,
                 }
         else:
@@ -337,29 +349,74 @@ class DistillerForPretrain(nn.Module):
 
         return total_loss, other_res
 
-    def compute_attn_loss(self, feat, attn_map_student, attn_map_teacher):
+    def compute_attn_loss(self, feat, feat_lens, attn_map_student, attn_map_teacher, hiddens_student, hiddens_teacher):
         """
         Inputs:
-            attn_map_student: [(B, Num_Heads, T, Hidden_Dim)]
+            attn_map_student: [(B, Num_Heads, T, T)]
             attn_map_teacher: [(...) x 3]
+            hiddens_student: [(B, T, D)]
+            hiddens_teacher: [(B, T, D)]
         """
         total_loss = 0
 
-        ## TODO
+        # KL divergence between the teacher's and the student's attention maps
+        ## TODO the loss should be normalized by number of **distributions**
+        # kl_loss = 0
+        # for S_map in attn_map_student: # S_map: B x num_heads x T x T
+        #     for T_map in attn_map_teacher:
+                # kl = self.loss_func(torch.log(S_map + 1e-10), T_map)
+                # kl = torch.sum(kl, dim=(3, 2, 1)) 
+                # kl = torch.sum(kl / feat_lens / S_map.size(0) / S_map.size(1)) # divided by seq_len, num_heads, batch_size
+
+                # kl_loss += kl
+        # kl_loss /= len(attn_map_student) * len(attn_map_teacher) # divided by number of layer pairs
+
         kl_loss = 0
-        for S_map in attn_map_student:
-            for T_map in attn_map_teacher:
-                kl_loss += self.loss_func(torch.log(S_map + 1e-10), T_map)
+        for S_map, T_map in zip(attn_map_student, attn_map_teacher):
+            kl = self.loss_func(torch.log(S_map + 1e-10), T_map)
+            kl = torch.sum(kl, dim=(3, 2, 1)) 
+            kl = torch.sum(kl / feat_lens / S_map.size(0) / S_map.size(1)) # divided by seq_len, num_heads, batch_size
+
+            kl_loss += kl
+        kl_loss /= len(attn_map_student)
+
+        # Value-Relation Loss
+        # vr_loss = 0
+        # for S_hidden in hiddens_student:
+        #     for T_hidden in hiddens_teacher:
+        #         VR_teacher = torch.softmax(torch.bmm(T_hidden, T_hidden.transpose(1, 2)) / np.sqrt(T_hidden.size()[2]), dim=2)
+        #         VR_student = torch.softmax(torch.bmm(S_hidden, S_hidden.transpose(1, 2)) / np.sqrt(S_hidden.size()[2]), dim=2)
+        #         vr = self.loss_func(torch.log(VR_student + 1e-10), VR_teacher)
+
+        #         vr = torch.sum(vr, dim=(2, 1))
+        #         vr = torch.sum(vr / feat_lens / VR_teacher.size(0))
+
+        #         vr_loss += vr
+        # vr_loss /= len(attn_map_student) * len(attn_map_teacher)
+
+        vr_loss = 0
+        for S_hidden, T_hidden in zip(hiddens_student, hiddens_teacher):
+                VR_teacher = torch.softmax(torch.bmm(T_hidden, T_hidden.transpose(1, 2)) / np.sqrt(T_hidden.size()[2]), dim=2)
+                VR_student = torch.softmax(torch.bmm(S_hidden, S_hidden.transpose(1, 2)) / np.sqrt(S_hidden.size()[2]), dim=2)
+                vr = self.loss_func(torch.log(VR_student + 1e-10), VR_teacher)
+
+                vr = torch.sum(vr, dim=(2, 1))
+                vr = torch.sum(vr / feat_lens / VR_teacher.size(0))
+
+                vr_loss += vr
+        vr_loss /= len(attn_map_student)
+
 
         # Feature loss
         feat_pen = feat.float().pow(2).mean()
 
         total_loss = (
-            kl_loss
+            kl_loss 
+            + vr_loss
             + feat_pen * self.config.feat_pen_loss
         )
 
-        return total_loss, kl_loss, feat_pen
+        return total_loss, kl_loss, vr_loss, feat_pen
 
     def compute_loss(self, feat, pred, target, return_other=False):
         """

@@ -296,9 +296,13 @@ class TransformerEncoder(nn.Module):
                 padding_mask=None, 
                 attn_mask=None, 
                 get_hidden=False,
+                downstream=False,
                 attn_selected=None):
         x, layer_results = self.extract_features(
-            x, padding_mask, attn_mask, get_hidden=get_hidden, attn_selected=attn_selected
+            x, padding_mask, attn_mask, 
+            get_hidden=get_hidden, 
+            downstream=downstream, 
+            attn_selected=attn_selected
         )
 
         if self.layer_norm_first:
@@ -310,6 +314,7 @@ class TransformerEncoder(nn.Module):
                         padding_mask=None, 
                         attn_mask=None, 
                         get_hidden=False, 
+                        downstream=False,
                         attn_selected=None):
 
         if padding_mask is not None:
@@ -328,8 +333,8 @@ class TransformerEncoder(nn.Module):
         x = x.transpose(0, 1)
 
         #################################################
-        if attn_selected is not None:
-            attn_maps = []
+        if (not downstream) and (attn_selected is not None):
+            layer_results = []
             for i, layer in enumerate(self.layers):
                 x, attn_map = layer(
                     x,
@@ -337,8 +342,9 @@ class TransformerEncoder(nn.Module):
                     need_weights=True
                 )
                 if (i+1) in attn_selected:
-                    attn_maps.append(attn_map)
-            return x, attn_maps
+                    # attn_maps.append(attn_map)
+                    layer_results.append((x, attn_map))
+            return x, layer_results
         ################################################
 
 

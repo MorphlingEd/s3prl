@@ -29,9 +29,10 @@ upstreamConfigFile = 'pretrain/attnDistiller/config_model.yaml'
 
 
 print("-------------- Loading Data ------------------------------")
+batch_size = 4
 dataset = OnlineWaveDataset(
     task_config={'sequence_length':250000},
-    bucket_size=1,
+    bucket_size=batch_size,
     file_path=dataPath,
     libri_root=dataPath,
     sets=['train-clean-100'],
@@ -74,32 +75,14 @@ print(pad_mask.size())
 
 
 
+# print("-------------- Loading HuBERT -------------------------")
+# hubert_ckpt = os.path.join(model_dir, 'hubert_converted.ckpt')
+# hubert = HuBERTExpert(hubert_ckpt)
+# hubert.model = hubert.model.to(device)
+# print(type(hubert))
 
-print("-------------- Loading HuBERT -------------------------")
-hubert_ckpt = os.path.join(model_dir, 'hubert_converted.ckpt')
-hubert = HuBERTExpert(hubert_ckpt)
-hubert.model = hubert.model.to(device)
-print(type(hubert))
-
-
-print("-------------- Feeding Data to HuBERT ------------------------------")
-attn_selected_teacher = [4, 8, 12]
-with torch.no_grad():
-    wave_orig = [wave.to(wave_input.device) for wave in wave_orig]
-    with torch.cuda.amp.autocast(False):
-        results = hubert(wave_orig, attn_selected_teacher)
-
-attnMapsTeacher = results["attention_maps"]
-print(len(attnMapsTeacher))
-for i, attnMap in zip(attn_selected_teacher, attnMapsTeacher):
-    print(f"-------------- Attention Map from HuBERT layer {i} -----------------------------")
-    print(attnMap.size())
-    print(getsizeof(attnMap))
-
-print('---------------- Size of teacher\'s final outputs -----------------')
-pred_teacher = results["last_hidden"]
-print(pred_teacher.size())
-print(torch.transpose(pred_teacher, 0, 1).size())
+# num_params = sum(p.numel() for p in hubert.model.parameters())
+# print(f"Number of parameters in HuBERT: {num_params}")
 
 
 print("-------------- Loading Distiller -------------------------")
@@ -110,17 +93,75 @@ modelConfig = DistillerConfig(distillerConfig['distiller'])
 distiller = DistillerModel(modelConfig)
 distiller = distiller.to(device)
 
+num_params = sum(p.numel() for p in distiller.parameters())
+print(f"Number of parameters in Distiller: {num_params}")
+
+
+# print("Initializing distiller from the teacher...")
+# distiller.encoder.pos_conv.load_state_dict(
+#     hubert.model.encoder.pos_conv.state_dict()
+# )
+# for l in range(2):
+#     distiller.encoder.layers[l].load_state_dict(
+#         hubert.model.encoder.layers[l].state_dict()
+#     )
+
+# print("Saving...")
+# all_states = {}
+# all_states["Distiller"] = distiller.state_dict()
+# all_states["Config"] = distillerConfig
+
+# save_path = os.path.join(model_dir, "baseline.ckpt")
+# torch.save(all_states, save_path)
+
+
+# print("-------------- Feeding Data to HuBERT ------------------------------")
+# with torch.no_grad():
+#     wave_orig = [wave.to(wave_input.device) for wave in wave_orig]
+#     with torch.cuda.amp.autocast(False):
+#         results = hubert(wave_orig, distiller.config.attn_selected_teacher)
+
+# attnMapsTeacher = results["attention_maps"]
+# hiddensTeacher  = [hidden.transpose(0, 1) for hidden in results['layer_hiddens']]
+# print(len(attnMapsTeacher))
+# for i, attnMap in zip(distiller.config.attn_selected_teacher, attnMapsTeacher):
+#     print(f"-------------- Attention Map from HuBERT layer {i} -----------------------------")
+#     print(attnMap.size())
+#     print(getsizeof(attnMap))
+
+# print(len(hiddensTeacher))
+# for i, hidden in zip(distiller.config.attn_selected_teacher, hiddensTeacher):
+#     print(f"-------------- Hidden representations from Teacher layer {i} --------------------")
+#     print(hidden.size())
+#     print(getsizeof(hidden))
+
+# print('---------------- Size of teacher\'s final outputs -----------------')
+# pred_teacher = results["last_hidden"]
+# print(pred_teacher.size())
+# print(torch.transpose(pred_teacher, 0, 1).size())
+
+
 
 print("-------------- Feeding Data to Distiller ---------------------------")
 attn_selected_student = [2]
 with torch.no_grad():
-    feat, feat_final, pred, pad_mask, attnMapsDistiller = distiller(wave_input, pad_mask)
+    feat, feat_final, pred, pad_mask, layerResults = distiller(wave_input, pad_mask)
+    attnMapsDistiller = [attnMap for _, attnMap in layerResults]
+    hiddensDistiller  = [hidden.transpose(0, 1) for hidden, _   in layerResults]
 
-print(len(attnMapsDistiller))
-for i, attnMap in zip(attn_selected_student ,attnMapsDistiller):
-    print(f"-------------- Attention Map from Distiller layer {i} -----------------------------")
-    print(attnMap.size())
-    print(getsizeof(attnMap))
+# print(len(attnMapsDistiller))
+# for i, attnMap in zip(attn_selected_student ,attnMapsDistiller):
+#     print(f"-------------- Attention Map from Distiller layer {i} -----------------------------")
+#     print(attnMap.size())
+#     print(getsizeof(attnMap))
+
+# print(len(hiddensDistiller))
+# for i, hidden in zip(attn_selected_student ,hiddensDistiller):
+#     print(f"-------------- Hidden representations from Distiller layer {i} --------------------")
+#     print(hidden.size())
+#     print(getsizeof(hidden))
+
+
 
 print('---------------- Size of student\'s outputs -------------------------')
 print(f"feat: {feat.size()}") # B x T x feat_dim (after convolutional layers)
@@ -128,14 +169,51 @@ print(f"feat_final: {feat_final.size()}") # B x T x hidden_dim (D)
 print(f"pred: {pred.size()}") # B x N x T x hidden_dim (but not sure what N is)
 
 
-print('-------------------- Calculating the loss ---------------------------')
-kl_loss = torch.nn.KLDivLoss(reduction="batchmean")
+# print('------------------------- Pad Mask ----------------------------------')
+# print(f"pad_mask: {pad_mask.size()}")
+# print(f"pad_mask requires_grad: {pad_mask.requires_grad}")
+# print(pad_mask)
 
-loss = 0
-for i, attn_teacher in zip(attn_selected_teacher, attnMapsTeacher):
-    for j, attn_student in zip(attn_selected_student, attnMapsDistiller):
-        kl = kl_loss(torch.log(attn_student + 1e-10), attn_teacher)
-        print(f"KL divergence between attention maps from student layer {j} and teacher layer {i} is: {kl}")
-        loss += kl
 
-print(f"total loss: {loss}")
+
+
+# kl_loss = torch.nn.KLDivLoss(reduction='none')
+# loss = 0
+
+# feat_lens = torch.sum(pad_mask, dim=1)
+# print(f"feat_lens: {feat_lens}")
+
+
+# print('-------------------- Calculating Attention-based loss ---------------------------')
+# for i, attn_teacher in zip(distiller.config.attn_selected_teacher, attnMapsTeacher):
+#     for j, attn_student in zip(attn_selected_student, attnMapsDistiller):
+#         kl = kl_loss(torch.log(attn_student + 1e-10), attn_teacher)
+
+#         # Normalization: divided by batch_size, number of heads, sequence lengths and later number of layer pairs
+#         kl = torch.sum(kl, dim=(3, 2, 1)) # sum over num_heads, 
+#         kl = torch.sum(kl / feat_lens / attn_student.size(0) / attn_student.size(1)) 
+
+#         print(f"KL divergence between attention maps from student layer {j} and teacher layer {i} is: {kl}")
+#         loss += kl
+
+# loss /= len(attnMapsTeacher) * len(attnMapsDistiller)
+# print(f"average Attn loss: {loss}")
+
+
+# print('-------------------- Calculating Value Relation loss ---------------------------')
+# loss = 0
+# for i, T_hidden in zip(distiller.config.attn_selected_teacher, hiddensTeacher):
+#     for j, S_hidden in zip(attn_selected_student, hiddensDistiller):
+#         VRTeacher = torch.softmax(torch.bmm(T_hidden, T_hidden.transpose(1, 2)) / np.sqrt(T_hidden.size()[2]), dim=2)
+#         VRStudent = torch.softmax(torch.bmm(S_hidden, S_hidden.transpose(1, 2)) / np.sqrt(S_hidden.size()[2]), dim=2)
+#         vr = kl_loss(torch.log(VRStudent + 1e-10), VRTeacher)
+
+#         # Normalization: divided by batch_size, sequence lengths and later number of layer pairs
+#         vr = torch.sum(vr, dim=(2, 1)) 
+#         vr = torch.sum(vr / feat_lens / T_hidden.size(0)) 
+
+#         print(f"KL divergence between value relation from student layer {j} and from teacher layer {i} is: {vr}")
+#         loss += vr
+
+# loss /= len(hiddensTeacher) * len(hiddensDistiller)
+# print(f"average VR loss: {loss}")

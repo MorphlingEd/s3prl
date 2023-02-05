@@ -138,11 +138,11 @@ class Runner():
             print(f"pip install -r {dependencies}")
             print()
 
-            from expert import UpstreamExpert
-            Upstream = UpstreamExpert
+            # from expert import UpstreamExpert
+            # Upstream = UpstreamExpert
             ckpt_path = os.path.join(filepath, self.args.upstream_model_name)
         else:
-            Upstream = getattr(hub, self.args.upstream)
+            # Upstream = getattr(hub, self.args.upstream)
             ckpt_path = self.args.upstream_ckpt
         upstream_refresh = self.args.upstream_refresh
 
@@ -150,11 +150,21 @@ class Runner():
             torch.distributed.barrier()
             upstream_refresh = False
 
-        model = Upstream(
-            ckpt = ckpt_path,
-            model_config = self.args.upstream_model_config,
-            refresh = upstream_refresh,
-        ).to(self.args.device)
+        if self.args.upstream == 'attnDistiller_local':
+            from upstream.attnDistiller.expert import UpstreamExpert
+            model = UpstreamExpert(
+                ckpt = ckpt_path,
+                model_config = self.args.upstream_model_config,
+                downstream=True,
+                refresh = upstream_refresh,
+            ).to(self.args.device)
+        elif self.args.upstream == 'distiller_local':
+            from upstream.distiller.expert import UpstreamExpert
+            model = UpstreamExpert(
+                ckpt = ckpt_path,
+                model_config = self.args.upstream_model_config,
+                refresh = upstream_refresh,
+            ).to(self.args.device)
 
         if is_initialized() and get_rank() == 0:
             torch.distributed.barrier()

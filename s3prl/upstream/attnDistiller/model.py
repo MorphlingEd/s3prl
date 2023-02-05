@@ -172,7 +172,8 @@ class DistillerModel(nn.Module):
                 pad_mask, 
                 task_id=None, 
                 get_hidden=False, 
-                no_pred=False):
+                no_pred=False,
+                downstream=False):
         """
         Forward function
         Input:
@@ -180,9 +181,8 @@ class DistillerModel(nn.Module):
             pad_mask (BoolTensor): B x T_wave
             task_id (LongTensor): N >= 1
         """
-
         feat, pad_mask = self.forward_feature(wave, pad_mask)
-
+            
         ############################################
         n_sz = 1
         b_sz, t_sz, _ = feat.shape
@@ -206,6 +206,7 @@ class DistillerModel(nn.Module):
                 feat_final, 
                 ~pad_mask.bool(), 
                 get_hidden=get_hidden, 
+                downstream=downstream,
                 attn_selected=self.config.attn_selected, ################################
             )
         else:
