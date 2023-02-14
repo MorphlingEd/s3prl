@@ -249,3 +249,217 @@ class DistillerModel(nn.Module):
 
     def generate_task_id(self, device):
         return torch.arange(self.n_tasks, device=device, dtype=torch.long)
+
+
+# """
+#     Distiller Model
+#     Author: Wenxuan Li
+# """
+
+# import torch
+# from torch import nn
+
+# from .module import (
+#     ConvFeatureExtractionModel,
+#     GradMultiply,
+#     SplitLinear,
+#     TransformerEncoder,
+# )
+
+
+# class DistillerConfig:
+#     """
+#     Configuration class
+#     """
+
+#     def __init__(self, config: dict):
+#         # Feature extractor
+#         self.extractor_mode = str(config.get("extractor_mode", "default"))
+#         self.extractor_conv_feature_layers = str(
+#             config.get(
+#                 "extractor_conv_feature_layers",
+#                 "[(512,10,5)] + [(512,3,2)] * 4 + [(512,2,2)] * 2",
+#             )
+#         )
+#         self.extractor_dropout = float(config.get("extractor_dropout", 0.0))
+#         self.feature_grad_mult = float(config.get("feature_grad_mult", 1.0))
+
+#         # Convolutional relative positional encoding
+#         self.conv_pos = int(config.get("conv_pos", 128))
+#         self.conv_pos_groups = int(config.get("conv_pos_groups", 16))
+
+#         # Transformer encoder
+#         self.encoder_layers = int(config.get("encoder_layers", 1))
+#         self.encoder_embed_dim = int(config.get("encoder_embed_dim", 768))
+#         self.encoder_ffn_embed_dim = int(config.get("encoder_ffn_embed_dim", 3072))
+#         self.encoder_attention_heads = int(config.get("encoder_attention_heads", 12))
+#         self.activation_fn = str(config.get("activation_fn", "gelu"))
+#         self.layer_norm_first = bool(config.get("layer_norm_first", False))
+#         self.attention_type = str(config.get("attention_type", "original"))
+
+#         # Dropout
+#         self.dropout = float(config.get("dropout", 0.1))
+#         self.attention_dropout = float(config.get("attention_dropout", 0.1))
+#         self.activation_dropout = float(config.get("activation_dropout", 0.1))
+#         self.encoder_layerdrop = float(config.get("encoder_layerdrop", 0.0))
+
+#         # Output
+#         self.final_dim = int(config.get("final_dim", 768))
+#         self.out_layer_type = str(config.get("out_layer_type", "expand-last"))
+#         self.out_layer_inter_dim = int(config.get("out_layer_inter_dim", -1))
+
+#         # Task & loss
+#         self.n_tasks = int(config.get("n_tasks", 12))
+#         self.task_emb_type = str(config.get("task_emb_type", "expand-last"))
+#         self.task_emb_size = int(config.get("task_emb_size", 0))
+#         self.layer_emb_size = int(config.get("layer_emb_size", 0))
+#         self.loss_type = str(config.get("loss_type", "l1"))
+#         self.feat_pen_loss = float(config.get("feat_pen_loss", 0.0))
+#         self.cosine_loss = float(config.get("cosine_loss", 0.0))
+
+#         # When task_emb_type == 'expand-last' only
+#         self.pred_layer_id = list(
+#             config.get("pred_layer_id", range(1, self.n_tasks + 1))
+#         )
+
+
+#         ###############################################
+#         self.std_attns = int(config.get("std_attns", 1))
+#         self.tch_attns = int(config.get("tch_attns", 3))
+
+#         self.attn_selected = list(
+#             config.get("attn_selected", [2])
+#         )
+#         self.attn_selected_teacher = list(
+#             config.get(" attn_selected_teacher", [4, 8, 12])
+#         )
+#         ###############################################
+
+#         # Initialization
+#         self.init_teacher_conv_layers = bool(
+#             config.get("init_teacher_conv_layers", False)
+#         )
+#         self.init_teacher_encoder_layers = bool(
+#             config.get("init_teacher_encoder_layers", False)
+#         )
+
+
+# class DistillerModel(nn.Module):
+#     """
+#     Distiller Model
+#     """
+
+#     def __init__(self, config: DistillerConfig):
+#         super().__init__()
+
+#         self.config = config
+
+#         self.conv_layers = eval(config.extractor_conv_feature_layers)
+#         feat_emb_dim = self.conv_layers[-1][0]
+#         self.feature_extractor = ConvFeatureExtractionModel(
+#             self.conv_layers,
+#             dropout=config.extractor_dropout,
+#             mode=config.extractor_mode,
+#             conv_bias=False,
+#         )
+#         self.feature_grad_mult = config.feature_grad_mult
+
+#         self.n_tasks = config.n_tasks
+#         self.task_emb_type = config.task_emb_type
+
+#         final_emb_size = config.encoder_embed_dim
+#         # ------------- Original statements for `expand-last` ------------------
+#         self.pred_layer_id = config.pred_layer_id
+#         assert self.n_tasks == len(self.pred_layer_id)
+#         print(
+#             f"[DistillerModel] - Expands the output dimension by {self.n_tasks} times"
+#         )
+#         print(f"[DistillerModel] - Pred layers: {self.pred_layer_id}")
+
+#         self.post_extract_proj = (
+#             nn.Linear(feat_emb_dim, config.encoder_embed_dim)
+#             if feat_emb_dim != config.encoder_embed_dim
+#             else None
+#         )
+
+#         if config.encoder_layers > 0:
+#             self.encoder = TransformerEncoder(config)
+#         else:
+#             self.encoder = nn.GELU()
+
+#         inter_dim = config.out_layer_inter_dim
+#         inter_dim = inter_dim if inter_dim > 0 else final_emb_size
+
+#     def forward_feature(self, wave, pad_mask):
+#         """Forward feature extractor"""
+
+#         if self.feature_grad_mult > 0:
+#             feat = self.feature_extractor(wave)
+#             if self.feature_grad_mult != 1.0:
+#                 feat = GradMultiply.apply(feat, self.feature_grad_mult)
+#         else:
+#             with torch.no_grad():
+#                 feat = self.feature_extractor(wave)
+
+#         feat = feat.transpose(1, 2)  # B x T x D
+#         pad_mask = self.cal_pad_mask(pad_mask, feat.shape[1])
+
+#         return feat, pad_mask
+
+#     def forward(self, 
+#                 wave, 
+#                 pad_mask, 
+#                 task_id=None, 
+#                 get_hidden=False, 
+#                 downstream=False):
+#         """
+#         Forward function
+#         Input:
+#             wave (FloatTensor): B x T_wave
+#             pad_mask (BoolTensor): B x T_wave
+#             task_id (LongTensor): N >= 1
+#         """
+#         feat, pad_mask = self.forward_feature(wave, pad_mask)
+            
+#         ############################################
+#         # feat_final B x T x D
+#         if self.post_extract_proj is not None:
+#             feat_final = self.post_extract_proj(feat)
+#         else:
+#             feat_final = feat
+#         ############################################
+
+#         layer_hiddens = []
+#         if self.config.encoder_layers > 0:
+#             hidden, layer_hiddens = self.encoder(
+#                 feat_final, 
+#                 ~pad_mask.bool(), 
+#                 get_hidden=get_hidden, 
+#                 downstream=downstream,
+#                 attn_selected=self.config.attn_selected, ################################
+#             )
+#         else:
+#             hidden = self.encoder(feat_final)
+
+#         if get_hidden or (self.config.attn_selected is not None):
+#             return feat, feat_final, pad_mask, layer_hiddens
+#         else:
+#             return feat, feat_final, pad_mask
+
+#     def cal_pad_mask(self, pad_mask, max_len):
+#         """Calculates pad mask after conv."""
+#         pad_len = (pad_mask > 0).sum(1).long()
+#         for _, k_size, s_size in self.conv_layers:
+#             pad_len = torch.div((pad_len - k_size), s_size, rounding_mode="trunc") + 1
+
+#         new_pad_mask = torch.ones(
+#             (pad_mask.shape[0], max_len), dtype=pad_mask.dtype, device=pad_mask.device
+#         )
+
+#         for idx in range(pad_len.shape[0]):
+#             new_pad_mask[idx, pad_len[idx] :] = 0
+
+#         return new_pad_mask
+
+#     def generate_task_id(self, device):
+#         return torch.arange(self.n_tasks, device=device, dtype=torch.long)

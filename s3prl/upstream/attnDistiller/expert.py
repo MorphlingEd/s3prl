@@ -41,6 +41,24 @@ class UpstreamExpert(UpstreamBase):
     def get_downsample_rates(self, key: str) -> int:
         return 320
 
+    # def forward(self, wavs):
+
+    #     _, feat_final, pred, pad_mask, layer_hidden = self.model(
+    #         wavs, get_hidden=True, downstream=self.downstream
+    #     )
+        
+    #     hidden_feats = [feat_final] + layer_hidden
+
+    #     # default feature selected for downstream model is "hidden_states"
+    #     # when downstream is true, layer_hidden returned by self.model is the list of hidden outputs from each layer
+    #     states = {
+    #         "hidden_states": hidden_feats,
+    #         "pad_mask": pad_mask,
+    #         "paper": layer_hidden[-1],  # DistilHuBERT: https://arxiv.org/abs/2110.01900
+    #     }
+
+    #     return states
+
     def forward(self, wavs, no_pred=False):
         _, feat_final, pred, pad_mask, layer_hidden = self.model(
             wavs, get_hidden=True, no_pred=no_pred, downstream=self.downstream

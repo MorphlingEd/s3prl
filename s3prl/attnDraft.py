@@ -145,7 +145,7 @@ print(f"Number of parameters in Distiller: {num_params}")
 print("-------------- Feeding Data to Distiller ---------------------------")
 attn_selected_student = [2]
 with torch.no_grad():
-    feat, feat_final, pred, pad_mask, layerResults = distiller(wave_input, pad_mask)
+    feat, feat_final, pad_mask, layerResults = distiller(wave_input, pad_mask)
     attnMapsDistiller = [attnMap for _, attnMap in layerResults]
     hiddensDistiller  = [hidden.transpose(0, 1) for hidden, _   in layerResults]
 
@@ -166,7 +166,7 @@ with torch.no_grad():
 print('---------------- Size of student\'s outputs -------------------------')
 print(f"feat: {feat.size()}") # B x T x feat_dim (after convolutional layers)
 print(f"feat_final: {feat_final.size()}") # B x T x hidden_dim (D)
-print(f"pred: {pred.size()}") # B x N x T x hidden_dim (but not sure what N is)
+# print(f"pred: {pred.size()}") # B x N x T x hidden_dim (but not sure what N is)
 
 
 # print('------------------------- Pad Mask ----------------------------------')

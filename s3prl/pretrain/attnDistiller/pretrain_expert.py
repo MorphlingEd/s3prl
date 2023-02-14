@@ -361,41 +361,38 @@ class DistillerForPretrain(nn.Module):
 
         # KL divergence between the teacher's and the student's attention maps
         ## TODO the loss should be normalized by number of **distributions**
-        # kl_loss = 0
-        # for S_map in attn_map_student: # S_map: B x num_heads x T x T
-        #     for T_map in attn_map_teacher:
-                # kl = self.loss_func(torch.log(S_map + 1e-10), T_map)
-                # kl = torch.sum(kl, dim=(3, 2, 1)) 
-                # kl = torch.sum(kl / feat_lens / S_map.size(0) / S_map.size(1)) # divided by seq_len, num_heads, batch_size
-
-                # kl_loss += kl
-        # kl_loss /= len(attn_map_student) * len(attn_map_teacher) # divided by number of layer pairs
-
         kl_loss = 0
-        for S_map, T_map in zip(attn_map_student, attn_map_teacher):
-            kl = self.loss_func(torch.log(S_map + 1e-10), T_map)
-            kl = torch.sum(kl, dim=(3, 2, 1)) 
-            kl = torch.sum(kl / feat_lens / S_map.size(0) / S_map.size(1)) # divided by seq_len, num_heads, batch_size
+        for S_map in attn_map_student: # S_map: B x num_heads x T x T
+            for T_map in attn_map_teacher:
+                kl = self.loss_func(torch.log(S_map + 1e-10), T_map)
+                kl = torch.sum(kl, dim=(3, 2, 1)) 
+                kl = torch.sum(kl / feat_lens / S_map.size(0) / S_map.size(1)) # divided by seq_len, num_heads, batch_size
 
-            kl_loss += kl
-        kl_loss /= len(attn_map_student)
+                kl_loss += kl
+        kl_loss /= len(attn_map_student) * len(attn_map_teacher) # divided by number of layer pairs
+
+        # kl_loss = 0
+        # S_map_1 = attn_map_student[1]
+        # for T_map in attn_map_teacher[1:]:
+        #     kl = self.loss_func(torch.log(S_map_1 + 1e-10), T_map)
+        #     kl = torch.sum(kl, dim=(3, 2, 1)) 
+        #     kl = torch.sum(kl / feat_lens / S_map_1.size(0) / S_map_1.size(1)) # divided by seq_len, num_heads, batch_size
+
+        #     kl_loss += kl
+        
+        # S_map_0 = attn_map_student[0]
+        # T_map_0 = attn_map_teacher[0]
+        # kl = self.loss_func(torch.log(S_map_0 + 1e-10), T_map_0)
+        # kl = torch.sum(kl, dim=(3, 2, 1)) 
+        # kl = torch.sum(kl / feat_lens / S_map_0.size(0) / S_map_0.size(1)) # divided by seq_len, num_heads, batch_size
+        # kl_loss += kl
+
+        # kl_loss /= 3
 
         # Value-Relation Loss
-        # vr_loss = 0
-        # for S_hidden in hiddens_student:
-        #     for T_hidden in hiddens_teacher:
-        #         VR_teacher = torch.softmax(torch.bmm(T_hidden, T_hidden.transpose(1, 2)) / np.sqrt(T_hidden.size()[2]), dim=2)
-        #         VR_student = torch.softmax(torch.bmm(S_hidden, S_hidden.transpose(1, 2)) / np.sqrt(S_hidden.size()[2]), dim=2)
-        #         vr = self.loss_func(torch.log(VR_student + 1e-10), VR_teacher)
-
-        #         vr = torch.sum(vr, dim=(2, 1))
-        #         vr = torch.sum(vr / feat_lens / VR_teacher.size(0))
-
-        #         vr_loss += vr
-        # vr_loss /= len(attn_map_student) * len(attn_map_teacher)
-
         vr_loss = 0
-        for S_hidden, T_hidden in zip(hiddens_student, hiddens_teacher):
+        for S_hidden in hiddens_student:
+            for T_hidden in hiddens_teacher:
                 VR_teacher = torch.softmax(torch.bmm(T_hidden, T_hidden.transpose(1, 2)) / np.sqrt(T_hidden.size()[2]), dim=2)
                 VR_student = torch.softmax(torch.bmm(S_hidden, S_hidden.transpose(1, 2)) / np.sqrt(S_hidden.size()[2]), dim=2)
                 vr = self.loss_func(torch.log(VR_student + 1e-10), VR_teacher)
@@ -404,7 +401,31 @@ class DistillerForPretrain(nn.Module):
                 vr = torch.sum(vr / feat_lens / VR_teacher.size(0))
 
                 vr_loss += vr
-        vr_loss /= len(attn_map_student)
+        vr_loss /= len(attn_map_student) * len(attn_map_teacher)
+
+        # vr_loss = 0
+        # S_hidden_1 = hiddens_student[1]
+        # for T_hidden in hiddens_teacher[1:]:
+        #     VR_teacher = torch.softmax(torch.bmm(T_hidden, T_hidden.transpose(1, 2)) / np.sqrt(T_hidden.size()[2]), dim=2)
+        #     VR_student = torch.softmax(torch.bmm(S_hidden_1, S_hidden_1.transpose(1, 2)) / np.sqrt(S_hidden_1.size()[2]), dim=2)
+        #     vr = self.loss_func(torch.log(VR_student + 1e-10), VR_teacher)
+        #     vr = torch.sum(vr, dim=(2, 1))
+        #     vr = torch.sum(vr / feat_lens / VR_teacher.size(0))
+
+        #     vr_loss += vr
+
+
+        S_hidden_0 = hiddens_student[0]
+        T_hidden_0 = hiddens_teacher[0]
+        VR_teacher = torch.softmax(torch.bmm(T_hidden_0, T_hidden_0.transpose(1, 2)) / np.sqrt(T_hidden_0.size()[2]), dim=2)
+        VR_student = torch.softmax(torch.bmm(S_hidden_0, S_hidden_0.transpose(1, 2)) / np.sqrt(S_hidden_0.size()[2]), dim=2)
+        vr = self.loss_func(torch.log(VR_student + 1e-10), VR_teacher)
+        vr = torch.sum(vr, dim=(2, 1))
+        vr = torch.sum(vr / feat_lens / VR_teacher.size(0))
+
+        vr_loss += vr
+
+        vr_loss /= 3
 
 
         # Feature loss

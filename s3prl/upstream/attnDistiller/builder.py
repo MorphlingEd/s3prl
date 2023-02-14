@@ -59,6 +59,12 @@ class DistillerBuilder(nn.Module):
 
     def load_model(self, model, state_dict, verbose=False):
         try:
+            # ################################################
+            # keys_to_remove = list(state_dict.keys())[-4:]
+            # for key in keys_to_remove:
+            #     state_dict.pop(key)
+            # ################################################
+            
             model.load_state_dict(state_dict)
             if verbose:
                 print("[DistillerBuilder] - Pre-trained weights loaded!")
@@ -92,7 +98,7 @@ class DistillerBuilder(nn.Module):
 
     def _forward(self, x, x_len, get_hidden=False, no_pred=False, downstream=False):
         wave, pad_mask = self.process_input_data(x, x_len)
-        x = self.model(wave, pad_mask, get_hidden=get_hidden, no_pred=no_pred, downstream=downstream)
+        x = self.model(wave, pad_mask, get_hidden=get_hidden, downstream=downstream)
 
         # x: (feat, feat_final, pred, pad_mask)
         return x

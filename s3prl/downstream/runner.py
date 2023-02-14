@@ -25,7 +25,7 @@ from torch.distributed import is_initialized, get_rank, get_world_size
 from s3prl import hub
 from s3prl.optimizers import get_optimizer
 from s3prl.schedulers import get_scheduler
-from s3prl.upstream.interfaces import Featurizer
+from upstream.interfaces import Featurizer
 from s3prl.utility.helper import is_leader_process, get_model_state, show, defaultdict
 
 from huggingface_hub import HfApi, HfFolder, Repository
@@ -102,7 +102,7 @@ class Runner():
 
     def _load_weight(self, model, name):
         init_weight = self.init_ckpt.get(name)
-        if init_weight:
+        if init_weight: # if None, no need to load (e.g. Featurizer when training)
             show(f'[Runner] - Loading {name} weights from the previous experiment')
             model.load_state_dict(init_weight)
 
@@ -186,6 +186,7 @@ class Runner():
             normalize = self.args.upstream_feature_normalize,
         ).to(self.args.device)
 
+        # Featurizer also needs weights from the pretrained ckpt's state_dict
         return self._init_model(
             model = model,
             name = 'Featurizer',
